@@ -100,6 +100,10 @@ def main():
     ap.add_argument("--delete", action="store_true", help="推理后删除视频文件以节省磁盘")
     ap.add_argument("--swanlab", action="store_true", help="上报进度到 SwanLab 可视化")
     ap.add_argument("--swanlab-project", default="dms-batch-infer")
+    ap.add_argument("--print-every", type=int, default=500,
+                    help="每处理 N 条打印一次近期预测样本+类别分布(0=关闭)")
+    ap.add_argument("--print-samples", type=int, default=5,
+                    help="每次打印展示的近期样本条数")
     args = ap.parse_args()
 
     order = load_order(args.manifest)
@@ -122,6 +126,9 @@ def main():
 
     t0 = time.time()
     n_ok = n_err = n_missing = 0
+    from collections import Counter, deque
+    cls_dist = Counter()                       # 预测类别累计分布
+    recent = deque(maxlen=max(1, args.print_samples))  # 最近若干条预测
 
     # ---- 结果持久化：追加写(绝不截断已有结果) + 周期 fsync 真正落盘 ----
     out = open(args.out, "a", encoding="utf-8")
@@ -160,13 +167,28 @@ def main():
                     cls, score, stage = infer_one(infer, path)
                 rec.update({"class": cls, "score": score, "stage": stage})
                 n_ok += 1
+                cls_dist[cls] += 1
+                recent.append(f"{h[:12]} -> {cls}({score:.3f}) s{stage}")
             except Exception as e:  # noqa
                 rec.update({"class": None, "score": None, "error": f"{type(e).__name__}: {e}"})
                 n_err += 1
+                cls_dist["<error>"] += 1
+                recent.append(f"{h[:12]} -> ERROR {type(e).__name__}")
             out.write(json.dumps(rec, ensure_ascii=False) + "\n")
             out.flush()
-            if (n_ok + n_err) % 200 == 0:      # 周期强制落盘，断电也不丢
+            processed = n_ok + n_err
+            if processed % 200 == 0:           # 周期强制落盘，断电也不丢
                 os.fsync(out.fileno())
+
+            # ---- 周期性打印近期预测样本 + 类别分布（不打断进度条）----
+            if args.print_every and processed % args.print_every == 0:
+                el = time.time() - t0
+                rate = processed / el if el else 0
+                dist = " ".join(f"{k}={v}" for k, v in cls_dist.most_common())
+                tqdm.write(f"\n[{time.strftime('%H:%M:%S')}] 已处理 {processed} "
+                           f"(ok={n_ok} err={n_err} miss={n_missing}) {rate:.2f}/s")
+                tqdm.write(f"  近 {len(recent)} 条预测: " + " | ".join(recent))
+                tqdm.write(f"  类别累计分布: {dist}")
             if args.delete:
                 try:
                     os.remove(path)

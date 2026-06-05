@@ -48,6 +48,14 @@ python batch_infer/run_infer.py ... --delete
 推理输出极简：模型内部逐切片日志全部静音，只剩一个总体进度条
 `推理 |████| 1234/113073`。要看曲线加 `--swanlab`（需 `pip install swanlab`）。
 
+默认每处理 500 条会打印一次近期预测样本 + 类别累计分布（用 `tqdm.write` 不打断进度条）：
+- `--print-every N` 改间隔（0 关闭），`--print-samples K` 改展示条数。
+```
+[20:23:52] 已处理 500 (ok=500 err=0 miss=0) 3.21/s
+  近 5 条预测: b63c1dd8 -> yawning(0.979) s2 | 72f78920 -> phone_use(0.415) s2 | ...
+  类别累计分布: phone_use=97 smoking=96 biyan=88 normal=80 zhuyili_no_focus=72 yawning=67
+```
+
 ## 3. 回填对比（本地）
 ```bash
 python batch_infer/join_results.py \
