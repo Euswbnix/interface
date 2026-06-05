@@ -1,0 +1,23 @@
+# 预训练模型（可用 download_model.py 重新下载，单文件超 GitHub 100MB 上限）
+videomae-base-local/
+
+# 推理输出与日志
+all/
+all_logs/
+*_logs/
+*.log
+
+# Python 缓存
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+
+# 本机/编辑器配置
+.claude/settings.local.json
+.idea/
+.vscode/
+
+# 大模型权重（如有放进目录的情况）
+*.pth
+*.safetensors
