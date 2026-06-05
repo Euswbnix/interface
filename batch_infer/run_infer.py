@@ -29,6 +29,12 @@ import sys
 import time
 import contextlib
 
+# 多进程分片并行时，必须把每个进程限制成单线程，否则每进程默认按全部核数起线程，
+# N 个进程会互相抢 CPU 反而更慢。这些环境变量须在 numpy/torch 导入前设置。
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS", "VECLIB_MAXIMUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
 # 让 config / first_step / second_step / interface 可导入（仓库根目录）
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -40,6 +46,18 @@ for name in ("", "mmengine", "mmaction", "mmcv"):
     logging.getLogger(name).setLevel(logging.ERROR)
 
 from interface import SliceInference  # noqa: E402
+
+# 进一步把 torch / opencv 也锁成单线程（分片并行下每片只吃 ~1 核）
+import torch  # noqa: E402
+try:
+    torch.set_num_threads(1)
+except Exception:  # noqa
+    pass
+try:
+    import cv2  # noqa: E402
+    cv2.setNumThreads(1)
+except Exception:  # noqa
+    pass
 
 _DEVNULL = open(os.devnull, "w")
 
@@ -104,12 +122,25 @@ def main():
                     help="每处理 N 条打印一次近期预测样本+类别分布(0=关闭)")
     ap.add_argument("--print-samples", type=int, default=5,
                     help="每次打印展示的近期样本条数")
+    ap.add_argument("--num-shards", type=int, default=1,
+                    help="把清单切成 N 片并行（配合 --shard-id 多进程各跑一片）")
+    ap.add_argument("--shard-id", type=int, default=0,
+                    help="本进程负责第几片（0..N-1）")
     args = ap.parse_args()
 
     order = load_order(args.manifest)
+    # ---- 分片：每个进程只取属于自己的那一片，并写独立的结果文件 ----
+    if args.num_shards > 1:
+        assert 0 <= args.shard_id < args.num_shards, "shard-id 必须在 0..num_shards-1"
+        order = order[args.shard_id::args.num_shards]
+        base, ext = os.path.splitext(args.out)
+        args.out = f"{base}.shard{args.shard_id}{ext}"
+        print(f"[分片 {args.shard_id}/{args.num_shards}] 本片 {len(order)} 条，"
+              f"结果 -> {args.out}", flush=True)
+
     done = load_done(args.out)
     todo = [h for h in order if h not in done]
-    print(f"清单 {len(order)} 条，已完成 {len(done)} 条，本次待处理 {len(todo)} 条", flush=True)
+    print(f"清单(本片) {len(order)} 条，已完成 {len(done)} 条，本次待处理 {len(todo)} 条", flush=True)
 
     run = None
     if args.swanlab:
